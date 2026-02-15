@@ -15,26 +15,25 @@ import {
   X,
   TrendingUp,
   Filter,
-  Leaf // Se agregó la importación que faltaba
+  Leaf // IMPORTANTE: Agregado para corregir el ReferenceError
 } from 'lucide-react';
 
-// --- GENERADOR DE DATOS MENSUALES (SIMULACIÓN OPTIMIZADA) ---
+// --- GENERADOR DE DATOS MENSUALES ---
 const generateMonthlyTrend = (total, label) => {
   const months = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
   const baseAvg = total / 12;
   
   return months.map((month, index) => {
-    // Variación matemática determinista para evitar saltos en re-renders
     const variation = 1 + (Math.sin(index * 0.8) * 0.15); 
     return {
       mes: month,
       valor: Number((baseAvg * variation).toFixed(2)),
-      material: label
+      material: String(label) // Aseguramos que sea string
     };
   });
 };
 
-// --- DATOS MATRIZ POR SEDE (CONSTANTES FUERA DEL COMPONENTE PARA MEJORAR PERFORMANCE) ---
+// --- DATOS ---
 const DATA_BY_LOCATION = {
   TOTAL: {
     label: "SEDES LIM-AQP-CÑ",
@@ -140,12 +139,13 @@ const DATA_BY_LOCATION = {
   }
 };
 
-// --- COMPONENTES UI (MEMOIZED) ---
+// --- COMPONENTES UI (OPTIMIZADOS PARA RENDIMIENTO) ---
 
-const ChartContainer = React.memo(({ title, icon, total, children, onClick, onDoubleClick, isSelected }) => (
+// Usamos React.memo para evitar re-renderizados innecesarios
+const ChartContainer = React.memo(({ title, icon, total, children, onClick, onOpenModal, isSelected }) => (
   <div 
     onClick={onClick}
-    onDoubleClick={onDoubleClick}
+    onDoubleClick={onOpenModal}
     className={`
       p-5 rounded-xl border transition-all duration-200 h-full flex flex-col relative cursor-pointer group
       ${isSelected 
@@ -154,8 +154,15 @@ const ChartContainer = React.memo(({ title, icon, total, children, onClick, onDo
       }
     `}
   >
-    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1 rounded-full shadow-sm text-emerald-600 z-10">
-      <Maximize2 size={16} />
+    {/* BOTÓN EXPLÍCITO DE EXPANDIR (Soluciona "no pasa nada al click") */}
+    <div 
+      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1.5 rounded-full shadow-md text-emerald-600 z-20 hover:bg-emerald-50 cursor-pointer"
+      onClick={(e) => {
+        e.stopPropagation(); // Evita conflicto con el click del contenedor
+        onOpenModal();
+      }}
+    >
+      <Maximize2 size={18} />
     </div>
 
     <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-2 pointer-events-none">
@@ -173,7 +180,7 @@ const ChartContainer = React.memo(({ title, icon, total, children, onClick, onDo
         <span className="text-[10px] text-slate-400">TON</span>
       </div>
     </div>
-    <div className="flex-1 min-h-[250px] pointer-events-none">
+    <div className="flex-1 min-h-[200px] pointer-events-none">
       {children}
     </div>
   </div>
@@ -181,14 +188,18 @@ const ChartContainer = React.memo(({ title, icon, total, children, onClick, onDo
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
+    // Verificación de seguridad para evitar error "Objects are not valid as a React child"
+    const val = payload[0].value;
+    const material = payload[0].payload.material || '';
+    
     return (
       <div className="bg-white p-3 border border-slate-100 shadow-lg rounded-lg z-50">
         <p className="text-xs font-bold text-slate-700 uppercase">{label}</p>
         <p className="text-sm font-bold text-indigo-600">
-          {new Intl.NumberFormat('es-CO').format(payload[0].value)} TON
+          {typeof val === 'number' ? new Intl.NumberFormat('es-CO').format(val) : val} TON
         </p>
-        {payload[0].payload.material && (
-          <p className="text-[10px] text-slate-400 mt-1 uppercase">{payload[0].payload.material}</p>
+        {material && (
+          <p className="text-[10px] text-slate-400 mt-1 uppercase">{material}</p>
         )}
       </div>
     );
@@ -196,15 +207,16 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-// Renderizado personalizado para etiquetas del Pie Chart
 const renderCustomPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, index, name, value, color }) => {
   const RADIAN = Math.PI / 180;
   const radius = outerRadius * 1.55; 
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);
 
-  // Filtrar etiquetas muy pequeñas para evitar saturación visual y lag
   if (percent < 0.03) return null;
+
+  // Truncamos el nombre para evitar textos largos que rompan el layout
+  const displayName = name.length > 12 ? name.substring(0, 10) + '...' : name;
 
   return (
     <text 
@@ -216,19 +228,17 @@ const renderCustomPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, perc
       className="text-[9px] font-bold uppercase"
       style={{fontSize: '9px', fontWeight: 600}}
     >
-      {`${name.substring(0, 10)}...: ${value.toFixed(1)}T`}
+      {`${displayName}: ${value.toFixed(1)}T`}
     </text>
   );
 };
 
-// --- MODAL DE DETALLE (PANTALLA COMPLETA - ARRIBA/ABAJO) ---
-// Usamos React.memo para evitar re-renderizados innecesarios del modal completo
+// --- MODAL DETALLADO (OPTIMIZADO) ---
 const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, onLocationChange }) => {
   const [selectedMaterial, setSelectedMaterial] = useState(null);
 
   const modalData = DATA_BY_LOCATION[currentLocation];
   
-  // Memoizamos el cálculo de datos para evitar procesos en cada render
   const chartData = useMemo(() => {
     switch(categoryKey) {
       case '1.1': return modalData.sub1_aprovechable;
@@ -241,26 +251,22 @@ const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, 
     }
   }, [categoryKey, modalData]);
 
-  // Cálculo de totales
   const totalValue = useMemo(() => {
     if (['sub2','sub3','sub4'].includes(categoryKey)) return modalData.totals[categoryKey];
     if (categoryKey === '1.1') return modalData.totals.sub1_aprovechable || chartData.reduce((a,b)=>a+b.valor,0);
     return chartData.reduce((a,b)=>a+b.valor,0);
   }, [categoryKey, modalData, chartData]);
 
-  // Valores dinámicos según selección
   const displayedTotal = selectedMaterial ? selectedMaterial.valor : totalValue;
   const displayedTitle = selectedMaterial ? selectedMaterial.name : title;
-  
   const compositionHeaderTotal = selectedMaterial ? selectedMaterial.valor : chartData.reduce((acc, curr) => acc + curr.valor, 0);
 
   const trendData = useMemo(() => {
     return generateMonthlyTrend(displayedTotal, selectedMaterial ? selectedMaterial.name : 'TOTAL CATEGORÍA');
   }, [displayedTotal, selectedMaterial]);
 
-  // Handlers estables
   const handleBarClick = useCallback((state) => {
-    if (state && state.activePayload) {
+    if (state && state.activePayload && state.activePayload.length > 0) {
       setSelectedMaterial(state.activePayload[0].payload);
     }
   }, []);
@@ -274,7 +280,6 @@ const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, 
     <div className="fixed inset-0 z-50 bg-slate-900/95 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-[95vw] h-[95vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
         
-        {/* Modal Header */}
         <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex flex-col md:flex-row justify-between items-center shrink-0 gap-4">
           <div className="flex items-center gap-3 w-full md:w-auto">
              <div className="p-2 bg-emerald-100 text-emerald-700 rounded-lg">
@@ -316,10 +321,9 @@ const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, 
           </button>
         </div>
 
-        {/* Modal Content */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-6">
             
-            {/* PARTE SUPERIOR: COMPOSICIÓN */}
+            {/* ARRIBA: COMPOSICIÓN */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col h-[40%] min-h-[300px]">
                <div className="flex justify-between items-center mb-4 shrink-0">
                  <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm uppercase">
@@ -341,7 +345,7 @@ const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, 
                       <XAxis type="number" hide />
                       <YAxis type="category" dataKey="name" width={140} tick={{fontSize: 10, fontWeight: 600, width: 130}} interval={0} />
                       <Tooltip cursor={{fill: '#f0fdf4'}} content={<CustomTooltip />} />
-                      <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={24} cursor="pointer" isAnimationActive={true} animationDuration={800}>
+                      <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={24} cursor="pointer" isAnimationActive={false}>
                         {chartData.map((entry, index) => (
                           <Cell 
                             key={`cell-${entry.name}`} 
@@ -357,7 +361,7 @@ const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, 
                </div>
             </div>
 
-            {/* PARTE INFERIOR: TENDENCIA - MODO CLARO */}
+            {/* ABAJO: TENDENCIA */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col h-[60%] min-h-[400px]">
                <div className="flex justify-between items-start mb-6 shrink-0">
                  <div>
@@ -389,12 +393,7 @@ const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, 
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                       <XAxis dataKey="mes" stroke="#64748B" tick={{fontSize: 14}} dy={10} />
-                      <YAxis 
-                        stroke="#64748B" 
-                        tick={{fontSize: 12}} 
-                        dx={-10} 
-                        unit=" TON"
-                      />
+                      <YAxis stroke="#64748B" tick={{fontSize: 12}} dx={-10} unit=" TON" />
                       <Tooltip 
                         contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#1e293b', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                       />
@@ -506,7 +505,7 @@ export default function App() {
                 </div>
               </div>
               <div className="text-xs text-slate-400 flex items-center gap-1 bg-slate-50 px-2 py-1 rounded border border-slate-100 uppercase">
-                <Maximize2 size={10} /> DOBLE CLICK PARA DETALLE
+                <Maximize2 size={10} /> DOBLE CLICK O ICONO PARA DETALLE
               </div>
           </div>
           
@@ -516,8 +515,12 @@ export default function App() {
               className="bg-slate-50 rounded-lg p-4 border border-slate-100 hover:border-emerald-300 hover:shadow-md transition-all cursor-zoom-in group relative"
               onDoubleClick={() => openModal('1.1', 'APROVECHABLES')}
             >
-              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1 rounded-full shadow-sm text-emerald-600">
-                <Maximize2 size={14} />
+              {/* Botón de expandir explícito para usuarios que no usan doble click */}
+              <div 
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1 rounded-full shadow-sm text-emerald-600 z-10 cursor-pointer"
+                onClick={(e) => {e.stopPropagation(); openModal('1.1', 'APROVECHABLES');}}
+              >
+                <Maximize2 size={16} />
               </div>
               <h4 className="text-sm font-bold text-slate-700 mb-4 text-center border-b border-slate-200 pb-2 uppercase">APROVECHABLES</h4>
               <div className="h-56">
@@ -542,8 +545,11 @@ export default function App() {
               className="bg-slate-50 rounded-lg p-4 border border-slate-100 hover:border-emerald-300 hover:shadow-md transition-all cursor-zoom-in group relative"
               onDoubleClick={() => openModal('1.2', 'NO APROVECHABLES')}
             >
-               <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1 rounded-full shadow-sm text-emerald-600">
-                <Maximize2 size={14} />
+               <div 
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1 rounded-full shadow-sm text-emerald-600 z-10 cursor-pointer"
+                onClick={(e) => {e.stopPropagation(); openModal('1.2', 'NO APROVECHABLES');}}
+              >
+                <Maximize2 size={16} />
               </div>
               <h4 className="text-sm font-bold text-slate-700 mb-4 text-center border-b border-slate-200 pb-2 uppercase">NO APROVECHABLES</h4>
               <div className="h-56">
@@ -568,8 +574,11 @@ export default function App() {
               className="bg-slate-50 rounded-lg p-4 border border-slate-100 hover:border-emerald-300 hover:shadow-md transition-all cursor-zoom-in group relative flex flex-col justify-between"
               onDoubleClick={() => openModal('1.3', 'ORGÁNICOS')}
             >
-               <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1 rounded-full shadow-sm text-emerald-600">
-                <Maximize2 size={14} />
+               <div 
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1 rounded-full shadow-sm text-emerald-600 z-10 cursor-pointer"
+                onClick={(e) => {e.stopPropagation(); openModal('1.3', 'ORGÁNICOS');}}
+              >
+                <Maximize2 size={16} />
               </div>
                <h4 className="text-sm font-bold text-slate-700 mb-4 text-center border-b border-slate-200 pb-2 uppercase">ORGÁNICOS</h4>
                <div className="flex flex-col items-center justify-center h-full">
@@ -595,7 +604,7 @@ export default function App() {
               icon={<AlertTriangle size={20}/>} 
               total={currentData.totals.sub2}
               onClick={() => setSelectedSub('sub2')}
-              onDoubleClick={() => openModal('sub2', 'PELIGROSOS')}
+              onOpenModal={() => openModal('sub2', 'PELIGROSOS')}
               isSelected={selectedSub === 'sub2'}
             >
               <ResponsiveContainer width="100%" height="100%">
@@ -627,7 +636,7 @@ export default function App() {
               icon={<Zap size={20}/>} 
               total={currentData.totals.sub3}
               onClick={() => setSelectedSub('sub3')}
-              onDoubleClick={() => openModal('sub3', 'RAEE')}
+              onOpenModal={() => openModal('sub3', 'RAEE')}
               isSelected={selectedSub === 'sub3'}
             >
               <div className="flex flex-col items-center justify-center h-full text-center p-4">
@@ -644,7 +653,7 @@ export default function App() {
               icon={<Droplets size={20}/>} 
               total={currentData.totals.sub4}
               onClick={() => setSelectedSub('sub4')}
-              onDoubleClick={() => openModal('sub4', 'DESCARTE')}
+              onOpenModal={() => openModal('sub4', 'DESCARTE')}
               isSelected={selectedSub === 'sub4'}
             >
               <div className="flex flex-col items-center justify-center h-full">
