@@ -1,32 +1,31 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
   PieChart, Pie, Cell, AreaChart, Area
 } from 'recharts';
 import { 
-  Leaf, 
   Database,
   Recycle,
   AlertTriangle,
   Zap,
   Droplets,
-  LayoutDashboard,
   MousePointerClick,
   MapPin,
   Maximize2,
   X,
   TrendingUp,
-  Filter
+  Filter,
+  Leaf // Se agregó la importación que faltaba
 } from 'lucide-react';
 
-// --- GENERADOR DE DATOS MENSUALES (SIMULACIÓN BASADA EN TOTALES) ---
+// --- GENERADOR DE DATOS MENSUALES (SIMULACIÓN OPTIMIZADA) ---
 const generateMonthlyTrend = (total, label) => {
   const months = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
   const baseAvg = total / 12;
   
   return months.map((month, index) => {
-    // Variación aleatoria controlada
-    const variation = 1 + (Math.sin(index * 0.8) * 0.15) + (Math.random() * 0.1 - 0.05); 
+    // Variación matemática determinista para evitar saltos en re-renders
+    const variation = 1 + (Math.sin(index * 0.8) * 0.15); 
     return {
       mes: month,
       valor: Number((baseAvg * variation).toFixed(2)),
@@ -35,7 +34,7 @@ const generateMonthlyTrend = (total, label) => {
   });
 };
 
-// --- DATOS MATRIZ POR SEDE ---
+// --- DATOS MATRIZ POR SEDE (CONSTANTES FUERA DEL COMPONENTE PARA MEJORAR PERFORMANCE) ---
 const DATA_BY_LOCATION = {
   TOTAL: {
     label: "SEDES LIM-AQP-CÑ",
@@ -141,14 +140,14 @@ const DATA_BY_LOCATION = {
   }
 };
 
-// --- COMPONENTES UI ---
+// --- COMPONENTES UI (MEMOIZED) ---
 
-const ChartContainer = ({ title, icon, total, children, onClick, onDoubleClick, isSelected }) => (
+const ChartContainer = React.memo(({ title, icon, total, children, onClick, onDoubleClick, isSelected }) => (
   <div 
     onClick={onClick}
     onDoubleClick={onDoubleClick}
     className={`
-      p-5 rounded-xl border transition-all duration-300 h-full flex flex-col relative cursor-pointer group
+      p-5 rounded-xl border transition-all duration-200 h-full flex flex-col relative cursor-pointer group
       ${isSelected 
         ? 'border-emerald-500 shadow-md ring-2 ring-emerald-500 ring-opacity-20 bg-emerald-50/10' 
         : 'border-slate-200 shadow-sm hover:shadow-lg hover:border-emerald-300 bg-white'
@@ -178,12 +177,12 @@ const ChartContainer = ({ title, icon, total, children, onClick, onDoubleClick, 
       {children}
     </div>
   </div>
-);
+));
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-white p-3 border border-slate-100 shadow-lg rounded-lg">
+      <div className="bg-white p-3 border border-slate-100 shadow-lg rounded-lg z-50">
         <p className="text-xs font-bold text-slate-700 uppercase">{label}</p>
         <p className="text-sm font-bold text-indigo-600">
           {new Intl.NumberFormat('es-CO').format(payload[0].value)} TON
@@ -204,6 +203,7 @@ const renderCustomPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, perc
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);
 
+  // Filtrar etiquetas muy pequeñas para evitar saturación visual y lag
   if (percent < 0.03) return null;
 
   return (
@@ -222,53 +222,53 @@ const renderCustomPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, perc
 };
 
 // --- MODAL DE DETALLE (PANTALLA COMPLETA - ARRIBA/ABAJO) ---
-const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationChange }) => {
+// Usamos React.memo para evitar re-renderizados innecesarios del modal completo
+const DetailModal = React.memo(({ title, categoryKey, onClose, currentLocation, onLocationChange }) => {
   const [selectedMaterial, setSelectedMaterial] = useState(null);
 
   const modalData = DATA_BY_LOCATION[currentLocation];
   
-  let chartData = [];
-  let totalValue = 0;
+  // Memoizamos el cálculo de datos para evitar procesos en cada render
+  const chartData = useMemo(() => {
+    switch(categoryKey) {
+      case '1.1': return modalData.sub1_aprovechable;
+      case '1.2': return modalData.sub1_noAprovechable;
+      case '1.3': return modalData.sub1_organicos;
+      case 'sub2': return modalData.sub2_peligrosos;
+      case 'sub3': return modalData.sub3_priorizados;
+      case 'sub4': return modalData.sub4_descarte;
+      default: return [];
+    }
+  }, [categoryKey, modalData]);
 
-  switch(categoryKey) {
-    case '1.1':
-      chartData = modalData.sub1_aprovechable;
-      totalValue = modalData.totals.sub1_aprovechable || chartData.reduce((a,b)=>a+b.valor,0);
-      break;
-    case '1.2':
-      chartData = modalData.sub1_noAprovechable;
-      totalValue = chartData.reduce((a,b)=>a+b.valor,0);
-      break;
-    case '1.3':
-      chartData = modalData.sub1_organicos;
-      totalValue = chartData.reduce((a,b)=>a+b.valor,0);
-      break;
-    case 'sub2':
-      chartData = modalData.sub2_peligrosos;
-      totalValue = modalData.totals.sub2;
-      break;
-    case 'sub3':
-      chartData = modalData.sub3_priorizados;
-      totalValue = modalData.totals.sub3;
-      break;
-    case 'sub4':
-      chartData = modalData.sub4_descarte;
-      totalValue = modalData.totals.sub4;
-      break;
-    default:
-      break;
-  }
+  // Cálculo de totales
+  const totalValue = useMemo(() => {
+    if (['sub2','sub3','sub4'].includes(categoryKey)) return modalData.totals[categoryKey];
+    if (categoryKey === '1.1') return modalData.totals.sub1_aprovechable || chartData.reduce((a,b)=>a+b.valor,0);
+    return chartData.reduce((a,b)=>a+b.valor,0);
+  }, [categoryKey, modalData, chartData]);
 
   // Valores dinámicos según selección
   const displayedTotal = selectedMaterial ? selectedMaterial.valor : totalValue;
   const displayedTitle = selectedMaterial ? selectedMaterial.name : title;
   
-  // Cálculo dinámico para la etiqueta TOTAL en la esquina del gráfico de composición
   const compositionHeaderTotal = selectedMaterial ? selectedMaterial.valor : chartData.reduce((acc, curr) => acc + curr.valor, 0);
 
   const trendData = useMemo(() => {
     return generateMonthlyTrend(displayedTotal, selectedMaterial ? selectedMaterial.name : 'TOTAL CATEGORÍA');
   }, [displayedTotal, selectedMaterial]);
+
+  // Handlers estables
+  const handleBarClick = useCallback((state) => {
+    if (state && state.activePayload) {
+      setSelectedMaterial(state.activePayload[0].payload);
+    }
+  }, []);
+
+  const handleResetSelection = useCallback((e) => {
+    e.stopPropagation();
+    setSelectedMaterial(null);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/95 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -316,7 +316,7 @@ const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationC
           </button>
         </div>
 
-        {/* Modal Content - LAYOUT VERTICAL */}
+        {/* Modal Content */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col gap-6">
             
             {/* PARTE SUPERIOR: COMPOSICIÓN */}
@@ -325,7 +325,6 @@ const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationC
                  <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm uppercase">
                    <Filter size={16}/> COMPOSICIÓN (SELECCIONA PARA FILTRAR)
                  </h3>
-                 {/* TOTAL DINÁMICO EN LA ESQUINA SUPERIOR DERECHA */}
                  <div className="bg-slate-100 px-3 py-1 rounded text-xs font-bold text-slate-600 border border-slate-200 uppercase transition-all duration-300">
                     TOTAL: {new Intl.NumberFormat('es-CO').format(compositionHeaderTotal)} TON
                  </div>
@@ -336,20 +335,16 @@ const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationC
                       data={chartData} 
                       layout="vertical" 
                       margin={{left: 0, right: 30}}
-                      onClick={(state) => {
-                        if (state && state.activePayload) {
-                          setSelectedMaterial(state.activePayload[0].payload);
-                        }
-                      }}
+                      onClick={handleBarClick}
                     >
                       <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" />
                       <XAxis type="number" hide />
                       <YAxis type="category" dataKey="name" width={140} tick={{fontSize: 10, fontWeight: 600, width: 130}} interval={0} />
                       <Tooltip cursor={{fill: '#f0fdf4'}} content={<CustomTooltip />} />
-                      <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={24} cursor="pointer">
+                      <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={24} cursor="pointer" isAnimationActive={true} animationDuration={800}>
                         {chartData.map((entry, index) => (
                           <Cell 
-                            key={`cell-${index}`} 
+                            key={`cell-${entry.name}`} 
                             fill={entry.color} 
                             opacity={selectedMaterial && selectedMaterial.name !== entry.name ? 0.3 : 1}
                             stroke={selectedMaterial && selectedMaterial.name === entry.name ? "#000" : "none"}
@@ -362,7 +357,7 @@ const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationC
                </div>
             </div>
 
-            {/* PARTE INFERIOR: TENDENCIA */}
+            {/* PARTE INFERIOR: TENDENCIA - MODO CLARO */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col h-[60%] min-h-[400px]">
                <div className="flex justify-between items-start mb-6 shrink-0">
                  <div>
@@ -375,7 +370,7 @@ const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationC
                  </div>
                  {selectedMaterial && (
                    <button 
-                     onClick={(e) => { e.stopPropagation(); setSelectedMaterial(null); }}
+                     onClick={handleResetSelection}
                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-full transition-colors flex items-center gap-2 font-bold uppercase"
                    >
                      <X size={14}/> VER GENERAL
@@ -409,7 +404,7 @@ const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationC
                         stroke={selectedMaterial ? selectedMaterial.color : "#10B981"} 
                         fill="url(#colorTrend)" 
                         strokeWidth={3}
-                        animationDuration={500}
+                        animationDuration={800}
                         dot={{ r: 4, fill: '#fff', stroke: selectedMaterial ? selectedMaterial.color : "#10B981", strokeWidth: 2 }}
                         activeDot={{ r: 6, strokeWidth: 2, fill: '#fff', stroke: selectedMaterial ? selectedMaterial.color : "#10B981" }} 
                       />
@@ -422,7 +417,7 @@ const DetailModal = ({ title, categoryKey, onClose, currentLocation, onLocationC
       </div>
     </div>
   );
-};
+});
 
 // --- APP PRINCIPAL ---
 
@@ -435,10 +430,10 @@ export default function App() {
   const currentData = DATA_BY_LOCATION[selectedLocation];
   const grandTotal = currentData.totals.sub1 + currentData.totals.sub2 + currentData.totals.sub3 + currentData.totals.sub4;
 
-  const openModal = (category, title) => {
+  const openModal = useCallback((category, title) => {
     setActiveModalCategory(category);
     setActiveModalTitle(title);
-  };
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-12">
@@ -496,7 +491,7 @@ export default function App() {
         <div 
           onClick={() => setSelectedSub('sub1')}
           className={`
-            bg-white p-6 rounded-xl shadow-sm border transition-all duration-300
+            bg-white p-6 rounded-xl shadow-sm border transition-all duration-200
             ${selectedSub === 'sub1' ? 'border-emerald-500 ring-2 ring-emerald-500 ring-opacity-20' : 'border-slate-200'}
           `}
         >
@@ -532,9 +527,9 @@ export default function App() {
                     <XAxis type="number" hide />
                     <YAxis type="category" dataKey="name" width={90} tick={{fontSize: 9, fill: '#64748B'}} />
                     <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={20}>
-                      {currentData.sub1_aprovechable.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
+                    <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={20} isAnimationActive={false}>
+                      {currentData.sub1_aprovechable.map((entry) => (
+                        <Cell key={`sub1-aprov-${entry.name}`} fill={entry.color} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -558,9 +553,9 @@ export default function App() {
                     <XAxis type="number" hide />
                     <YAxis type="category" dataKey="name" width={90} tick={{fontSize: 9, fill: '#64748B'}} />
                     <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={20}>
-                      {currentData.sub1_noAprovechable.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
+                    <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={20} isAnimationActive={false}>
+                      {currentData.sub1_noAprovechable.map((entry) => (
+                        <Cell key={`sub1-noaprov-${entry.name}`} fill={entry.color} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -615,8 +610,9 @@ export default function App() {
                     dataKey="valor"
                     label={renderCustomPieLabel}
                     labelLine={true}
+                    isAnimationActive={false}
                   >
-                    {currentData.sub2_peligrosos.map((entry, index) => <Cell key={index} fill={entry.color} />)}
+                    {currentData.sub2_peligrosos.map((entry) => <Cell key={`sub2-${entry.name}`} fill={entry.color} />)}
                   </Pie>
                   <Tooltip />
                 </PieChart>
